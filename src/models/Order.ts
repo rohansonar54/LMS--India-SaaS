@@ -144,8 +144,8 @@ const TimelineSchema = new Schema<IOrderTimeline>({
 });
 
 const OrderSchema = new Schema<IOrder>({
-  orderNumber: { type: String, required: true, unique: true, index: true },
-  trackingToken: { type: String, unique: true, sparse: true, index: true },
+  orderNumber: { type: String, required: true, unique: true },
+  trackingToken: { type: String, unique: true, sparse: true },
   locationId: { type: Schema.Types.ObjectId, ref: 'Location', default: null, index: true },
   locationName: { type: String, default: '' },
   customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true, index: true },
@@ -203,6 +203,5 @@ const OrderSchema = new Schema<IOrder>({
 
 OrderSchema.index({ locationId: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ locationId: 1, paymentStatus: 1 });
-OrderSchema.index({ orderNumber: 1 });
 
 export const Order: Model<IOrder> = mongoose.models.Order || mongoose.model<IOrder>('Order', OrderSchema);
