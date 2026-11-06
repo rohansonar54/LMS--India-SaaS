@@ -69,29 +69,20 @@ body {
   scrollbar-color: #1e293b transparent;
 }
 
-/* Kanban Board: Horizontal side-scroll for mobile and tablets; Full grid for desktop/laptop web */
-@media (max-width: 1023px) {
+/* Kanban Board: Horizontal side-scroll for mobile and tablets (including iPad Pro); Full 6-column grid for wide desktop */
+@media (max-width: 1535px) {
   .kanban-board-container {
     display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
     overflow-x: auto !important;
     padding-bottom: 1rem !important;
+    -webkit-overflow-scrolling: touch;
   }
   .kanban-column-all {
     width: 310px !important;
     min-width: 280px !important;
-    flex-shrink: 0 !important;
-  }
-}
-
-@media (pointer: coarse) and (max-width: 1400px) {
-  .kanban-board-container {
-    display: flex !important;
-    overflow-x: auto !important;
-    padding-bottom: 1rem !important;
-  }
-  .kanban-column-all {
-    width: 320px !important;
-    min-width: 280px !important;
+    max-width: 330px !important;
     flex-shrink: 0 !important;
   }
 }

@@ -230,17 +230,73 @@ export default function ReceiptModal({ order, onClose }: ReceiptModalProps) {
   };
 
   const handleWhatsApp = () => {
-    if (!order.customerContact) return;
+    if (!order.customerContact) {
+      alert('Customer mobile number is not available.');
+      return;
+    }
     const cleanPhone = order.customerContact.replace(/\D/g, '');
-    const formattedPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
-    const paymentMsg =
-      remainingBalance > 0
-        ? `Balance Pending: ${formatINR(remainingBalance)}. Paid: ${formatINR(order.amountPaid)}`
-        : `Paid in Full (${formatINR(order.total)})`;
+    if (!cleanPhone) {
+      alert('Invalid mobile number.');
+      return;
+    }
+    const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
 
-    const message = encodeURIComponent(
-      `Namaste ${order.customerName}! 🧺\nYour laundry order #${order.orderNumber} is confirmed at ${BUSINESS_INFO.name}.\nTotal Amount: ${formatINR(order.total)}\n${paymentMsg}\nTrack live status here: ${trackingUrl}\nThank you! — ${BUSINESS_INFO.name}`
-    );
+    const orderItemsList = order.orderItems || order.items || [];
+    const totalItemsCount = orderItemsList.reduce((sum, item) => sum + (item.qty || item.kilo || 1), 0);
+    const itemNames = orderItemsList
+      .slice(0, 3)
+      .map((item) => `${item.itemName || item.typeName || 'Garment'} (x${item.qty || item.kilo || 1})`)
+      .join(', ');
+    const itemsSummary = orderItemsList.length > 3 ? `${itemNames} +${orderItemsList.length - 3} more` : itemNames;
+
+    const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const deliveryDateStr = order.expectedDeliveryDate
+      ? new Date(order.expectedDeliveryDate).toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        })
+      : null;
+
+    let paymentSummary = `• *Total Bill:* ${formatINR(order.total)}\n`;
+    if (order.amountPaid > 0) {
+      paymentSummary += `• *Advance Paid:* ${formatINR(order.amountPaid)}${order.paymentMethod ? ` (${order.paymentMethod.toUpperCase()})` : ''}\n`;
+    }
+    if (remainingBalance > 0) {
+      paymentSummary += `• *Balance Due:* ⚠️ ${formatINR(remainingBalance)}`;
+    } else {
+      paymentSummary += `• *Payment Status:* ✅ Paid in Full`;
+    }
+
+    const messageLines = [
+      `🧺 *${BUSINESS_INFO.name.toUpperCase()}*`,
+      `_${BUSINESS_INFO.tagline}_`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `Namaste *${order.customerName}*! 🙏`,
+      `Your laundry order has been booked successfully.\n`,
+      `📋 *Order Details:*`,
+      `• *Order #:* #${order.orderNumber}`,
+      `• *Date:* ${orderDateStr}`,
+      totalItemsCount > 0 ? `• *Items (${totalItemsCount} pcs):* ${itemsSummary}` : '',
+      deliveryDateStr ? `• *Expected Delivery:* ${deliveryDateStr}` : '',
+      `\n💰 *Bill Summary:*`,
+      paymentSummary,
+      `\n📍 *Live Order Tracking:*`,
+      `Track your order live anytime:`,
+      `${trackingUrl}`,
+      `\n━━━━━━━━━━━━━━━━━━━━`,
+      BUSINESS_INFO.phone ? `📞 *Helpline:* ${BUSINESS_INFO.phone}` : '',
+      `_Thank you for choosing ${BUSINESS_INFO.name}!_ ✨`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const message = encodeURIComponent(messageLines);
     window.open(`https://wa.me/${formattedPhone}?text=${message}`, '_blank');
   };
 

@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import Navbar from '@/components/Navbar';
 import Pagination from '@/components/Pagination';
 import { formatINR } from '@/lib/currency';
-import { Users, Plus, Search, Edit2, Trash2, Phone, MapPin, Building2, Wallet } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Phone, MapPin, Building2, Wallet, AlertCircle } from 'lucide-react';
 
 interface Customer {
   _id: string;
@@ -44,6 +44,24 @@ export default function CustomersPage() {
     fetchCustomers();
   }, []);
 
+  const normalizeDigits = (str: string) => {
+    const d = (str || '').replace(/\D/g, '');
+    return d.length > 10 ? d.slice(-10) : d;
+  };
+
+  // Instant duplicate check against existing customers
+  const existingCustMatch = React.useMemo(() => {
+    const inputDigits = normalizeDigits(contact);
+    if (inputDigits.length < 5) return null;
+    return (
+      customers.find((c) => {
+        if (editingId && c._id === editingId) return false;
+        const cDigits = normalizeDigits(c.contact);
+        return cDigits && (cDigits === inputDigits || (inputDigits.length >= 7 && cDigits.endsWith(inputDigits)));
+      }) || null
+    );
+  }, [contact, customers, editingId]);
+
   const handleOpenAdd = () => {
     setEditingId(null);
     setFullname('');
@@ -64,6 +82,13 @@ export default function CustomersPage() {
     e.preventDefault();
     if (!fullname || !contact) return;
 
+    if (!editingId && existingCustMatch) {
+      if (confirm(`A customer named "${existingCustMatch.fullname}" already has this phone number (${existingCustMatch.contact}). Would you like to view/edit that customer instead?`)) {
+        handleOpenEdit(existingCustMatch);
+      }
+      return;
+    }
+
     const method = editingId ? 'PUT' : 'POST';
     const body = editingId
       ? { id: editingId, fullname, address, contact }
@@ -79,6 +104,9 @@ export default function CustomersPage() {
     if (data.success) {
       setShowModal(false);
       fetchCustomers();
+    } else if (data.code === 'CUSTOMER_EXISTS' && data.customer) {
+      alert(data.message);
+      handleOpenEdit(data.customer);
     } else {
       alert(data.message || 'Error saving customer');
     }
@@ -253,8 +281,38 @@ export default function CustomersPage() {
                   placeholder="e.g. 9820011223"
                   value={contact}
                   onChange={(e) => setContact(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  className={`w-full px-3 py-2 text-xs rounded-xl border font-mono transition ${
+                    !editingId && existingCustMatch
+                      ? 'border-amber-400 bg-amber-50/30 ring-2 ring-amber-300/50'
+                      : 'border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  }`}
                 />
+
+                {/* Instant Existing Customer Detected Alert & One-Click Edit */}
+                {!editingId && existingCustMatch && (
+                  <div className="mt-2.5 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-xs space-y-2 animate-in fade-in">
+                    <div className="flex items-center space-x-1.5 text-amber-900 font-bold">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Customer with this number already exists!</span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-amber-200 flex items-center justify-between gap-2 shadow-xs">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 text-xs truncate">{existingCustMatch.fullname}</p>
+                        <p className="text-[11px] text-slate-500 font-mono flex items-center space-x-1">
+                          <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{existingCustMatch.contact}</span>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(existingCustMatch)}
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs active:scale-95 shrink-0 transition"
+                      >
+                        Edit Customer →
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -278,7 +336,13 @@ export default function CustomersPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-sm"
+                  disabled={!editingId && !!existingCustMatch}
+                  title={!editingId && existingCustMatch ? 'Mobile number already belongs to an existing customer. Click "Edit Customer" above.' : ''}
+                  className={`px-4 py-2 rounded-xl text-white text-xs font-bold shadow-sm transition ${
+                    !editingId && !!existingCustMatch
+                      ? 'opacity-40 cursor-not-allowed bg-slate-400'
+                      : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
+                  }`}
                 >
                   Save Customer
                 </button>

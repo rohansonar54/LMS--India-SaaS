@@ -58,6 +58,29 @@ export async function POST(req: Request) {
       if (loc) locationName = loc.name;
     }
 
+    // Check if customer with this mobile number already exists
+    const cleanContact = contact.replace(/\D/g, '');
+    const last10 = cleanContact.length >= 10 ? cleanContact.slice(-10) : cleanContact;
+    const contactFilter: Record<string, unknown> = {
+      contact: { $regex: last10 + '$', $options: 'i' },
+    };
+    if (targetLocId) {
+      contactFilter.locationId = targetLocId;
+    }
+
+    const existingCustomer = await Customer.findOne(contactFilter);
+    if (existingCustomer) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'CUSTOMER_EXISTS',
+          message: `Customer with mobile number ${existingCustomer.contact} already exists: ${existingCustomer.fullname}`,
+          customer: existingCustomer,
+        },
+        { status: 409 }
+      );
+    }
+
     const newCustomer = await Customer.create({
       fullname: fullname.trim(),
       address: address?.trim() || '',
@@ -109,6 +132,32 @@ export async function PUT(req: Request) {
       address: address?.trim() !== undefined ? address.trim() : existing.address,
       contact: contact?.trim() || existing.contact,
     };
+
+    // If contact changed, verify no other customer has this mobile number
+    if (contact && contact.trim() !== existing.contact) {
+      const cleanContact = contact.replace(/\D/g, '');
+      const last10 = cleanContact.length >= 10 ? cleanContact.slice(-10) : cleanContact;
+      const targetLoc = reqLocId || existing.locationId;
+      const duplicateFilter: Record<string, unknown> = {
+        _id: { $ne: id },
+        contact: { $regex: last10 + '$', $options: 'i' },
+      };
+      if (targetLoc) {
+        duplicateFilter.locationId = targetLoc;
+      }
+      const duplicate = await Customer.findOne(duplicateFilter);
+      if (duplicate) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'CUSTOMER_EXISTS',
+            message: `Another customer (${duplicate.fullname}) already has this mobile number.`,
+            customer: duplicate,
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     // Only admin can change customer location
     if (user.level === 0 && reqLocId) {

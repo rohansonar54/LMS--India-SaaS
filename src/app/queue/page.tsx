@@ -23,6 +23,7 @@ import {
   User,
   ShieldCheck,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 
 interface QueueOrderItem {
@@ -82,6 +83,10 @@ export default function QueuePage() {
   const [collectRef, setCollectRef] = useState('');
   const [adminOverride, setAdminOverride] = useState(false);
   const [handoverSubmitting, setHandoverSubmitting] = useState(false);
+
+  // Delete / Cancel Mistaken Order in Received Section
+  const [orderToDelete, setOrderToDelete] = useState<QueueOrder | null>(null);
+  const [isDeletingOrder, setIsDeletingOrder] = useState(false);
 
   // Debounce search by 250ms so user typing doesn't spam Atlas queries
   useEffect(() => {
@@ -239,6 +244,33 @@ export default function QueuePage() {
     }
   };
 
+  // Delete mistaken order (Received section only)
+  const handleDeleteOrder = async () => {
+    if (!orderToDelete) return;
+    setIsDeletingOrder(true);
+    const targetId = orderToDelete._id;
+
+    // Instant optimistic removal from UI
+    setOrders((prev) => prev.filter((o) => o._id !== targetId));
+
+    try {
+      const res = await fetch(`/api/orders/${targetId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || 'Failed to delete order');
+        fetchOrders();
+      }
+    } catch {
+      alert('Network error while deleting order');
+      fetchOrders();
+    } finally {
+      setIsDeletingOrder(false);
+      setOrderToDelete(null);
+    }
+  };
+
   // Canonical stages to display on the board
   const boardColumns: { key: WorkflowStageKey; title: string; icon: string }[] = [
     { key: 'pending', title: 'Received', icon: '⏳' },
@@ -361,8 +393,8 @@ export default function QueuePage() {
             </div>
           )}
 
-          {/* Kanban Multi-Column Board (Grid on Laptop/Desktop, Side-Scroll on Mobile & Tablet) */}
-          <div className="kanban-board-container flex gap-4 items-start overflow-x-auto pb-4 pt-1 px-0.5 scrollbar-thin lg:grid lg:grid-cols-3 2xl:grid-cols-6 lg:overflow-x-visible lg:pb-0">
+          {/* Kanban Multi-Column Board (Full 6-column Grid on Desktop Web, Side-Scroll on Mobile & Tablets) */}
+          <div className="kanban-board-container flex gap-4 items-start overflow-x-auto pb-4 pt-1 px-0.5 scrollbar-thin 2xl:grid 2xl:grid-cols-6 2xl:overflow-x-visible 2xl:pb-0">
             {boardColumns
               .filter((col) => activeTab === 'all' || activeTab === col.key)
               .map((col) => {
@@ -374,7 +406,7 @@ export default function QueuePage() {
                   <div
                     key={col.key}
                     className={`${activeTab === 'all'
-                        ? 'kanban-column-all w-[285px] sm:w-[315px] shrink-0 min-w-[280px] lg:w-auto lg:min-w-0 lg:shrink'
+                        ? 'kanban-column-all w-[285px] sm:w-[315px] shrink-0 min-w-[280px] 2xl:w-auto 2xl:min-w-0 2xl:shrink'
                         : 'w-full max-w-xl'
                       } bg-slate-200/60 rounded-3xl p-3 sm:p-3.5 border border-slate-300/60 flex flex-col min-h-[450px]`}
                   >
@@ -437,13 +469,13 @@ export default function QueuePage() {
                               }`}
                             >
                               {/* Order # and Payment Status Badge */}
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="font-mono font-bold text-blue-600 text-xs flex items-center space-x-1">
+                              <div className="flex items-center justify-between gap-1 min-w-0">
+                                <span className="font-mono font-bold text-blue-600 text-xs flex items-center space-x-1 whitespace-nowrap shrink-0">
                                   <span>#{order.orderNumber}</span>
                                   {isUpdating && <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />}
                                 </span>
                                 <span
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${isFullyPaid
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${isFullyPaid
                                       ? 'bg-emerald-100 text-emerald-800'
                                       : order.amountPaid > 0
                                         ? 'bg-amber-100 text-amber-800'
@@ -454,15 +486,27 @@ export default function QueuePage() {
                                 </span>
                               </div>
 
-                              {/* Customer Information */}
-                              <div>
-                                <p className="font-bold text-slate-800 text-xs truncate">
-                                  {order.customerName}
-                                </p>
-                                <p className="text-[11px] text-slate-500 font-medium flex items-center space-x-1">
-                                  <Phone className="w-3 h-3 text-slate-400" />
-                                  <span>{order.customerContact || 'N/A'}</span>
-                                </p>
+                              {/* Customer Information & Delete button for Received station */}
+                              <div className="flex items-start justify-between gap-1">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-bold text-slate-800 text-xs truncate">
+                                    {order.customerName}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500 font-medium flex items-center space-x-1">
+                                    <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span className="truncate">{order.customerContact || 'N/A'}</span>
+                                  </p>
+                                </div>
+                                {col.key === 'pending' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderToDelete(order)}
+                                    title="Delete Mistaken Order"
+                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition active:scale-90 shrink-0 -mt-0.5"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
 
                               {/* Item Summary Pill */}
@@ -489,11 +533,11 @@ export default function QueuePage() {
                               )}
 
                               {/* Action Buttons: Next Stage / Handover & Receipt */}
-                              <div className="pt-1 flex items-center space-x-1.5">
+                              <div className="pt-1 flex items-center space-x-1.5 min-w-0">
                                 <button
                                   onClick={() => setSelectedReceipt(order as unknown as ReceiptOrder)}
                                   title="View / Print Receipt"
-                                  className="p-1.5 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition"
+                                  className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition shrink-0 self-stretch flex items-center justify-center"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
@@ -502,7 +546,7 @@ export default function QueuePage() {
                                   <button
                                     onClick={() => handleAdvanceStage(order)}
                                     disabled={isUpdating}
-                                    className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center space-x-1 shadow-xs transition active:scale-95 ${
+                                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center space-x-1 shadow-xs transition active:scale-95 text-center leading-tight ${
                                       isUpdating
                                         ? 'bg-blue-400 text-white cursor-wait opacity-90'
                                         : next === 'claimed'
@@ -512,24 +556,43 @@ export default function QueuePage() {
                                   >
                                     {isUpdating ? (
                                       <>
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        <span>Saving...</span>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                                        <span className="text-xs">Saving...</span>
                                       </>
                                     ) : (
                                       <>
-                                        <span>
-                                          {next === 'claimed'
-                                            ? order.balance > 0
-                                              ? 'Collect & Deliver'
-                                              : 'Handover'
-                                            : `Move to ${nextStageInfo?.label.split('/')[0].trim() || next}`}
+                                        <span className="flex-1 text-center leading-tight">
+                                          {next === 'claimed' ? (
+                                            order.balance > 0 ? (
+                                              <span className="text-[11px] font-bold">Collect &amp; Deliver</span>
+                                            ) : (
+                                              <span className="text-[11px] font-bold">Handover</span>
+                                            )
+                                          ) : (
+                                            <>
+                                              <span className="block text-[9.5px] uppercase tracking-wider font-medium opacity-85">
+                                                Move to
+                                              </span>
+                                              <span className="block text-[11px] font-bold">
+                                                {next === 'washing_drying'
+                                                  ? 'Wash & Dry'
+                                                  : next === 'ironing'
+                                                    ? 'Iron / Press'
+                                                    : next === 'dry_cleaning'
+                                                      ? 'Dry Clean'
+                                                      : next === 'done'
+                                                        ? 'Ready for Pickup'
+                                                        : nextStageInfo?.label || next}
+                                              </span>
+                                            </>
+                                          )}
                                         </span>
-                                        <ChevronRight className="w-3.5 h-3.5" />
+                                        <ChevronRight className="w-3.5 h-3.5 shrink-0" />
                                       </>
                                     )}
                                   </button>
                                 ) : (
-                                  <div className="flex-1 py-1 text-center text-[10px] font-bold text-slate-400 uppercase">
+                                  <div className="flex-1 py-2 text-center text-[10px] font-bold text-slate-400 uppercase">
                                     Delivered ✓
                                   </div>
                                 )}
@@ -685,6 +748,78 @@ export default function QueuePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete / Cancel Mistaken Order Confirmation Modal (Received Section Only) */}
+      {orderToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Delete Mistaken Order?</h3>
+                <p className="text-xs text-slate-500 font-mono">#{orderToDelete.orderNumber}</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Customer:</span>
+                <span className="font-bold text-slate-900">{orderToDelete.customerName}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Total Bill:</span>
+                <span className="font-mono font-bold text-slate-900">{formatINR(orderToDelete.total)}</span>
+              </div>
+              {orderToDelete.amountPaid > 0 && (
+                <div className="flex justify-between text-slate-600">
+                  <span>Advance Paid:</span>
+                  <span className="font-mono font-bold text-emerald-600">{formatINR(orderToDelete.amountPaid)}</span>
+                </div>
+              )}
+              {orderToDelete.balance > 0 && (
+                <div className="flex justify-between text-slate-600">
+                  <span>Due Balance:</span>
+                  <span className="font-mono font-bold text-rose-600">{formatINR(orderToDelete.balance)}</span>
+                </div>
+              )}
+              <p className="text-[11px] text-rose-600 pt-1.5 border-t border-slate-200 leading-relaxed">
+                This will cancel the order, release any outstanding customer dues, and remove it from the Received queue.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-2 pt-1">
+              <button
+                type="button"
+                disabled={isDeletingOrder}
+                onClick={() => setOrderToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+              >
+                Keep Order
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingOrder}
+                onClick={handleDeleteOrder}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5 active:scale-95 disabled:opacity-75"
+              >
+                {isDeletingOrder ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Order</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -183,25 +183,56 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Only Admin can cancel/delete orders
-    const auth = await requireAuth(0);
+    const auth = await requireAuth();
     if (!auth.user) return auth.response;
 
     await connectDB();
     const user = auth.user;
     const { id } = await params;
-    const order = await Order.findByIdAndUpdate(id, { status: 'cancelled' }, { new: true });
+    const order = await Order.findById(id);
 
     if (!order) {
       return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
     }
 
+    // Authorization:
+    // Admin (level === 0) can delete any order.
+    // Staff (level > 0) can delete if order is in Received stage ('pending' or 'processing') and in their location.
+    if (user.level > 0) {
+      if (order.status !== 'pending' && order.status !== 'processing') {
+        return NextResponse.json(
+          { success: false, message: 'Staff can only delete mistaken orders in the Received section' },
+          { status: 403 }
+        );
+      }
+      if (order.locationId && user.locationId && order.locationId.toString() !== user.locationId.toString()) {
+        return NextResponse.json(
+          { success: false, message: 'Access denied: order belongs to another location' },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Revert customer outstanding balance if balance was attached to customer
+    if (order.balance > 0 && order.customerId) {
+      await Customer.findByIdAndUpdate(order.customerId, {
+        $inc: { outstandingBalance: -order.balance },
+      });
+    }
+
+    // Delete associated advance payments for this mistaken order
+    await Payment.deleteMany({ orderId: order._id });
+
+    // Mark order as cancelled
+    order.status = 'cancelled';
+    await order.save();
+
     await Log.create({
-      username: user.name || user.username || 'Admin',
-      type: 'Transaction',
-      logs: `Cancelled order #${order?.orderNumber}`,
-      locationId: order?.locationId,
-      locationName: order?.locationName,
+      username: user.name || user.username || 'Staff',
+      type: 'Order Deleted',
+      logs: `Deleted/Cancelled mistaken order #${order.orderNumber} for ${order.customerName}`,
+      locationId: order.locationId,
+      locationName: order.locationName,
     });
 
     return NextResponse.json({ success: true, order });

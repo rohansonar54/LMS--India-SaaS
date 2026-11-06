@@ -21,6 +21,7 @@ import {
   AlertCircle,
   X,
   Loader2,
+  Phone,
 } from 'lucide-react';
 
 interface CustomerOption {
@@ -114,6 +115,58 @@ export default function TransactionsPage() {
   const [newCustName, setNewCustName] = useState('');
   const [newCustContact, setNewCustContact] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
+  const [asyncCustMatch, setAsyncCustMatch] = useState<CustomerOption | null>(null);
+
+  // Normalize phone helper
+  const normalizeDigits = (str: string) => {
+    const d = (str || '').replace(/\D/g, '');
+    return d.length > 10 ? d.slice(-10) : d;
+  };
+
+  // Instant 0ms synchronous match from loaded customers
+  const syncCustMatch = React.useMemo(() => {
+    const inputDigits = normalizeDigits(newCustContact);
+    if (inputDigits.length < 5) return null;
+    return (
+      customers.find((c) => {
+        const cDigits = normalizeDigits(c.contact);
+        return cDigits && (cDigits === inputDigits || (inputDigits.length >= 7 && cDigits.endsWith(inputDigits)));
+      }) || null
+    );
+  }, [newCustContact, customers]);
+
+  // Debounced server search fallback if customer is not in local cache
+  useEffect(() => {
+    const inputDigits = normalizeDigits(newCustContact);
+    if (inputDigits.length < 10) {
+      setAsyncCustMatch(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/customers?search=${inputDigits}`).then((r) => r.json());
+        if (res.success && res.customers?.length > 0) {
+          const found = res.customers.find((c: CustomerOption) => normalizeDigits(c.contact) === inputDigits);
+          if (found) setAsyncCustMatch(found);
+        }
+      } catch {}
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [newCustContact]);
+
+  const existingCustMatch = syncCustMatch || asyncCustMatch;
+
+  const handleUseExistingCustomer = (cust: CustomerOption) => {
+    if (!customers.some((c) => c._id === cust._id)) {
+      setCustomers((prev) => [cust, ...prev]);
+    }
+    setSelectedCustomerId(cust._id);
+    setShowAddCustomerModal(false);
+    setNewCustName('');
+    setNewCustContact('');
+    setNewCustAddress('');
+    setAsyncCustMatch(null);
+  };
 
   // Custom Item Modal
   const [showCustomItemModal, setShowCustomItemModal] = useState(false);
@@ -142,9 +195,6 @@ export default function TransactionsPage() {
 
       if (custRes.success) {
         setCustomers(custRes.customers || []);
-        if (custRes.customers?.length > 0 && !selectedCustomerId) {
-          setSelectedCustomerId(custRes.customers[0]._id);
-        }
       }
 
       if (itemsRes.success) {
@@ -337,10 +387,16 @@ export default function TransactionsPage() {
     setCustomItemPrice('50');
   };
 
-  // Add new customer modal with loader
+  // Add new customer modal with loader & duplicate prevention
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustName || !newCustContact) return;
+
+    // If already detected as existing customer, select them immediately
+    if (existingCustMatch) {
+      handleUseExistingCustomer(existingCustMatch);
+      return;
+    }
 
     setIsCreatingCustomer(true);
     try {
@@ -362,6 +418,10 @@ export default function TransactionsPage() {
         setNewCustName('');
         setNewCustContact('');
         setNewCustAddress('');
+        setAsyncCustMatch(null);
+      } else if (data.code === 'CUSTOMER_EXISTS' && data.customer) {
+        // Backend caught duplicate customer by mobile number
+        handleUseExistingCustomer(data.customer);
       } else {
         alert(data.message || 'Error creating customer');
       }
@@ -370,6 +430,28 @@ export default function TransactionsPage() {
     } finally {
       setIsCreatingCustomer(false);
     }
+  };
+
+  // Completely resets all form fields: customer selection, search, clothing items, charges, payments, and notes
+  const resetForm = () => {
+    setSelectedCustomerId('');
+    setCustomerSearch('');
+    setCustomerDropdownOpen(false);
+    setItemRows([
+      {
+        id: Date.now().toString(),
+        itemName: 'Shirt / Formal Shirt',
+        serviceName: 'Wash & Iron',
+        qty: 1,
+        unitPrice: 25,
+        subtotal: 25,
+      },
+    ]);
+    setAmountPaid('0');
+    setAdditionalCharges('0');
+    setDiscount('0');
+    setReferenceNumber('');
+    setOrderNotes('');
   };
 
   // Preset payment buttons (Full, 50%, Zero)
@@ -442,22 +524,8 @@ export default function TransactionsPage() {
           );
         }
 
-        // Reset rows to default single item
-        setItemRows([
-          {
-            id: Date.now().toString(),
-            itemName: 'Shirt / Formal Shirt',
-            serviceName: 'Wash & Iron',
-            qty: 1,
-            unitPrice: 25,
-            subtotal: 25,
-          },
-        ]);
-        setAmountPaid('0');
-        setAdditionalCharges('0');
-        setDiscount('0');
-        setReferenceNumber('');
-        setOrderNotes('');
+        // Completely reset customer, clothes, and billing inputs
+        resetForm();
       } else {
         alert(data.message || 'Error creating order');
       }
@@ -1131,8 +1199,46 @@ export default function TransactionsPage() {
                   placeholder="e.g. 9820011223"
                   value={newCustContact}
                   onChange={(e) => setNewCustContact(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={`w-full px-3 py-2 text-xs rounded-xl border font-mono transition ${
+                    existingCustMatch
+                      ? 'border-amber-400 bg-amber-50/30 ring-2 ring-amber-300/50'
+                      : 'border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  }`}
                 />
+
+                {/* Instant Existing Customer Detected Alert & One-Click Use Button */}
+                {existingCustMatch && (
+                  <div className="mt-2.5 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-xs space-y-2 animate-in fade-in">
+                    <div className="flex items-center space-x-1.5 text-amber-900 font-bold">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Customer Already Exists!</span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-amber-200 flex items-center justify-between gap-2 shadow-xs">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 text-xs truncate">{existingCustMatch.fullname}</p>
+                        <p className="text-[11px] text-slate-500 font-mono flex items-center space-x-1">
+                          <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{existingCustMatch.contact}</span>
+                          {(existingCustMatch.outstandingBalance || 0) > 0 && (
+                            <span className="text-rose-600 font-semibold ml-1">
+                              (Dues: {formatINR(existingCustMatch.outstandingBalance || 0)})
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUseExistingCustomer(existingCustMatch)}
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs active:scale-95 shrink-0 transition"
+                      >
+                        Use This Customer →
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-amber-800 leading-snug">
+                      Click <strong className="font-bold">&quot;Use This Customer&quot;</strong> to select this customer without creating a duplicate.
+                    </p>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">Address / Landmark</label>
@@ -1154,9 +1260,12 @@ export default function TransactionsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isCreatingCustomer}
-                  className={`px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-sm flex items-center space-x-1.5 transition ${
-                    isCreatingCustomer ? 'opacity-80 cursor-wait' : 'active:scale-95'
+                  disabled={isCreatingCustomer || !!existingCustMatch}
+                  title={existingCustMatch ? 'Mobile number already belongs to an existing customer. Click "Use This Customer" above.' : ''}
+                  className={`px-4 py-2 rounded-xl text-white text-xs font-semibold shadow-sm flex items-center space-x-1.5 transition ${
+                    isCreatingCustomer || !!existingCustMatch
+                      ? 'opacity-40 cursor-not-allowed bg-slate-400'
+                      : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
                   }`}
                 >
                   Save & Select
@@ -1247,7 +1356,13 @@ export default function TransactionsPage() {
       )}
 
       {/* Dual Printable Receipt Modal */}
-      <ReceiptModal order={completedOrder} onClose={() => setCompletedOrder(null)} />
+      <ReceiptModal
+        order={completedOrder}
+        onClose={() => {
+          setCompletedOrder(null);
+          resetForm();
+        }}
+      />
     </div>
   );
 }
