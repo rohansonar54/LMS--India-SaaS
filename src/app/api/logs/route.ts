@@ -10,7 +10,7 @@ export async function GET(req: Request) {
 
     await connectDB();
 
-    // Trigger auto-deletion of logs older than 20 days in the background
+    // Trigger auto-deletion of logs older than 10 days in the background
     purgeOldLogs().catch((err) => console.error('Error auto-purging old logs:', err));
 
     const { searchParams } = new URL(req.url);
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 
     const locationFilter = await getLocationQueryFilter(req);
 
-    // Retention boundary: only return logs within the latest 20 days
+    // Retention boundary: only return logs within the latest 10 days
     const cutoffDate = new Date(Date.now() - LOG_RETENTION_SECONDS * 1000);
 
     const query: Record<string, unknown> = {
@@ -54,7 +54,7 @@ export async function GET(req: Request) {
 }
 
 /**
- * Endpoint for manually triggering or verifying auto-delete of logs older than 20 days
+ * Endpoint for manually triggering or verifying auto-delete of logs older than 10 days
  */
 export async function DELETE() {
   try {

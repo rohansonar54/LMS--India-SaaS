@@ -52,15 +52,15 @@ export async function GET(req: Request) {
     let orders;
 
     if (limitParam) {
-      orders = await Order.find(filter).sort(sortOptions).limit(Number(limitParam) || 10);
+      orders = await Order.find(filter).sort(sortOptions).limit(Number(limitParam) || 10).lean();
     } else if (status === 'claimed') {
       // Delivered section: limit to newest 150 orders
-      orders = await Order.find(filter).sort({ createdAt: -1 }).limit(150);
+      orders = await Order.find(filter).sort({ createdAt: -1 }).limit(150).lean();
     } else if (!status || status === 'all') {
       // For queue board view: all active orders in progress, plus at most the newest 150 delivered orders
       const [activeOrders, deliveredOrders] = await Promise.all([
-        Order.find({ ...filter, status: { $ne: 'claimed' } }).sort(sortOptions),
-        Order.find({ ...filter, status: 'claimed' }).sort({ createdAt: -1 }).limit(150),
+        Order.find({ ...filter, status: { $ne: 'claimed' } }).sort(sortOptions).lean(),
+        Order.find({ ...filter, status: 'claimed' }).sort({ createdAt: -1 }).limit(150).lean(),
       ]);
       orders = [...activeOrders, ...deliveredOrders];
       if (sort === 'oldest') {
@@ -71,11 +71,11 @@ export async function GET(req: Request) {
         orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       }
     } else {
-      orders = await Order.find(filter).sort(sortOptions);
+      orders = await Order.find(filter).sort(sortOptions).lean();
     }
 
-    const normalizedOrders = orders.map((o) => {
-      const obj = o.toObject();
+    const normalizedOrders = orders.map((o: any) => {
+      const obj = { ...o };
       if (obj.status === 'washing' || obj.status === 'drying') {
         obj.status = 'washing_drying';
       }
@@ -87,6 +87,7 @@ export async function GET(req: Request) {
     const err = error as Error;
     return NextResponse.json({ success: false, message: err.message }, { status: 500 });
   }
+  
 }
 
 export async function POST(req: Request) {
@@ -124,7 +125,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, message: 'Please add at least one laundry item' }, { status: 400 });
     }
 
-    const customer = await Customer.findById(customerId);
+    const customer = await Customer.findById(customerId).lean();
     if (!customer) {
       return NextResponse.json({ success: false, message: 'Customer not found' }, { status: 404 });
     }
@@ -141,7 +142,7 @@ export async function POST(req: Request) {
 
     let locationName = '';
     if (targetLocId) {
-      const loc = await Location.findById(targetLocId);
+      const loc = await Location.findById(targetLocId).select('name').lean();
       if (loc) locationName = loc.name;
     }
 
@@ -236,39 +237,50 @@ export async function POST(req: Request) {
       notes: notes || '',
     });
 
+    // Parallelize post-creation tasks (Payment, Customer Balance, and Audit Log) to save ~400ms-600ms
+    const postTasks: Promise<any>[] = [];
+
     // Record Advance Payment if any amount paid
     if (actualPaidTowardsTotal > 0) {
-      await Payment.create({
-        orderId: newOrder._id,
-        orderNumber: newOrder.orderNumber,
-        customerId: customer._id,
-        customerName: customer.fullname,
-        locationId: targetLocId || null,
-        locationName,
-        amount: actualPaidTowardsTotal,
-        method: paymentMethod || 'Cash',
-        referenceNumber: referenceNumber || '',
-        staffName: staffName || user?.name || 'Staff',
-        notes: `Advance payment recorded at order creation`,
-        isAdvance: true,
-      });
+      postTasks.push(
+        Payment.create({
+          orderId: newOrder._id,
+          orderNumber: newOrder.orderNumber,
+          customerId: customer._id,
+          customerName: customer.fullname,
+          locationId: targetLocId || null,
+          locationName,
+          amount: actualPaidTowardsTotal,
+          method: paymentMethod || 'Cash',
+          referenceNumber: referenceNumber || '',
+          staffName: staffName || user?.name || 'Staff',
+          notes: `Advance payment recorded at order creation`,
+          isAdvance: true,
+        })
+      );
     }
 
     // Update customer outstanding balance if balance exists
     if (balance > 0) {
-      await Customer.findByIdAndUpdate(customer._id, {
-        $inc: { outstandingBalance: balance },
-      });
+      postTasks.push(
+        Customer.findByIdAndUpdate(customer._id, {
+          $inc: { outstandingBalance: balance },
+        })
+      );
     }
 
     // Log transaction
-    await Log.create({
-      username: staffName || user?.name || 'Staff',
-      type: 'Transaction',
-      logs: `Created order #${orderNumber} for ${customer.fullname} - Total: ₹${total}, Paid: ₹${actualPaidTowardsTotal}, Balance: ₹${balance}`,
-      locationId: targetLocId || null,
-      locationName,
-    });
+    postTasks.push(
+      Log.create({
+        username: staffName || user?.name || 'Staff',
+        type: 'Transaction',
+        logs: `Created order #${orderNumber} for ${customer.fullname} - Total: ₹${total}, Paid: ₹${actualPaidTowardsTotal}, Balance: ₹${balance}`,
+        locationId: targetLocId || null,
+        locationName,
+      })
+    );
+
+    await Promise.all(postTasks);
 
     return NextResponse.json({ success: true, order: newOrder });
   } catch (error: unknown) {

@@ -22,6 +22,7 @@ import {
   Phone,
   User,
   ShieldCheck,
+  Loader2,
 } from 'lucide-react';
 
 interface QueueOrderItem {
@@ -63,11 +64,16 @@ export default function QueuePage() {
   const [loading, setLoading] = useState(true);
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptOrder | null>(null);
 
-  // Search & Filters
+  // Search & Filters with Debouncing
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'delivery'>('newest');
   const [activeTab, setActiveTab] = useState<string>('all'); // For mobile tab switching
+
+  // Track in-flight stage progression per order for instant feedback
+  const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
 
   // Payment Collection Handover Popup State
   const [pendingHandoverOrder, setPendingHandoverOrder] = useState<QueueOrder | null>(null);
@@ -77,23 +83,39 @@ export default function QueuePage() {
   const [adminOverride, setAdminOverride] = useState(false);
   const [handoverSubmitting, setHandoverSubmitting] = useState(false);
 
-  const fetchOrders = () => {
-    setLoading(true);
-    fetch(`/api/orders?search=${encodeURIComponent(search)}&paymentStatus=${paymentStatusFilter}&sort=${sortBy}`)
+  // Debounce search by 250ms so user typing doesn't spam Atlas queries
+  useEffect(() => {
+    if (search !== debouncedSearch) {
+      setIsSearching(true);
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setIsSearching(false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const fetchOrders = (searchTerm = debouncedSearch, showLoadingSpinner = true) => {
+    if (showLoadingSpinner) setLoading(true);
+    fetch(`/api/orders?search=${encodeURIComponent(searchTerm)}&paymentStatus=${paymentStatusFilter}&sort=${sortBy}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
           setOrders(data.orders || []);
         }
       })
-      .finally(() => setLoading(false));
+      .catch((err) => console.error('Fetch orders error:', err))
+      .finally(() => {
+        setLoading(false);
+        setIsSearching(false);
+      });
   };
 
   useEffect(() => {
-    fetchOrders();
-  }, [search, paymentStatusFilter, sortBy]);
+    fetchOrders(debouncedSearch);
+  }, [debouncedSearch, paymentStatusFilter, sortBy]);
 
-  // Handle stage progression
+  // Handle stage progression with INSTANT OPTIMISTIC UI (0ms delay)
   const handleAdvanceStage = async (order: QueueOrder) => {
     const activeSteps = order.activeWorkflowSteps || [
       'pending',
@@ -106,7 +128,7 @@ export default function QueuePage() {
     const next = getNextStage(order.status, activeSteps);
     if (!next) return;
 
-    // Requirement 3: Check if next step is delivery ('claimed') and has unpaid balance!
+    // Check if next step is delivery ('claimed') and has unpaid balance!
     if (next === 'claimed' && order.balance > 0) {
       setPendingHandoverOrder(order);
       setCollectAmount(order.balance.toString());
@@ -116,7 +138,17 @@ export default function QueuePage() {
       return;
     }
 
-    // Direct progression for non-delivery or fully paid orders
+    const previousStatus = order.status;
+
+    // 1. Mark this specific order as updating (shows spinner on the button)
+    setUpdatingOrderIds((prev) => ({ ...prev, [order._id]: true }));
+
+    // 2. OPTIMISTIC UPDATE: Move the card to next station INSTANTLY (0ms response time!)
+    setOrders((prev) =>
+      prev.map((o) => (o._id === order._id ? { ...o, status: next } : o))
+    );
+
+    // 3. Sync with backend in background
     try {
       const res = await fetch(`/api/orders/${order._id}`, {
         method: 'PUT',
@@ -124,37 +156,57 @@ export default function QueuePage() {
         body: JSON.stringify({ status: next, staffName: 'Staff' }),
       });
       const data = await res.json();
-      if (data.success) {
-        fetchOrders();
-      } else {
+      if (!data.success) {
+        // Revert on error
+        setOrders((prev) =>
+          prev.map((o) => (o._id === order._id ? { ...o, status: previousStatus } : o))
+        );
         alert(data.message || 'Failed to update stage');
+      } else if (data.order) {
+        // Silently update any server fields without full 150-order re-fetch
+        setOrders((prev) =>
+          prev.map((o) => (o._id === order._id ? { ...o, ...data.order } : o))
+        );
       }
     } catch {
-      alert('Error connecting to server');
+      // Revert on network disconnect
+      setOrders((prev) =>
+        prev.map((o) => (o._id === order._id ? { ...o, status: previousStatus } : o))
+      );
+      alert('Network error: Change was reverted.');
+    } finally {
+      setUpdatingOrderIds((prev) => {
+        const nextState = { ...prev };
+        delete nextState[order._id];
+        return nextState;
+      });
     }
   };
 
-  // Submit payment & complete handover
+  // Submit payment & complete handover with optimistic completion
   const handleCompleteHandover = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingHandoverOrder) return;
 
+    const currentOrder = pendingHandoverOrder;
     setHandoverSubmitting(true);
+
     try {
       const payload: Record<string, unknown> = {
         status: 'claimed',
         staffName: 'Staff Attendant',
       };
 
+      const paidAmount = Number(collectAmount) || 0;
       if (adminOverride) {
         payload.adminOverride = true;
       } else {
-        payload.paymentAmount = Number(collectAmount) || 0;
+        payload.paymentAmount = paidAmount;
         payload.paymentMethod = collectMethod;
         payload.referenceNumber = collectRef;
       }
 
-      const res = await fetch(`/api/orders/${pendingHandoverOrder._id}`, {
+      const res = await fetch(`/api/orders/${currentOrder._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -162,8 +214,21 @@ export default function QueuePage() {
 
       const data = await res.json();
       if (data.success) {
+        // Instantly update local order to claimed
+        setOrders((prev) =>
+          prev.map((o) =>
+            o._id === currentOrder._id
+              ? {
+                  ...o,
+                  status: 'claimed',
+                  amountPaid: o.amountPaid + (adminOverride ? 0 : paidAmount),
+                  balance: Math.max(0, o.balance - (adminOverride ? 0 : paidAmount)),
+                  paymentStatus: (o.balance - (adminOverride ? 0 : paidAmount)) <= 0 ? 'paid' : 'partial',
+                }
+              : o
+          )
+        );
         setPendingHandoverOrder(null);
-        fetchOrders();
       } else {
         alert(data.message || 'Payment collection failed');
       }
@@ -207,13 +272,17 @@ export default function QueuePage() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               {/* Search Bar: Order #, Customer Name, Mobile # */}
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                {isSearching ? (
+                  <Loader2 className="w-4 h-4 text-blue-600 absolute left-3.5 top-1/2 -translate-y-1/2 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                )}
                 <input
                   type="text"
                   placeholder="Search by Order #, Customer Name, Mobile #..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm rounded-2xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
+                  className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm rounded-2xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 transition"
                 />
               </div>
 
@@ -243,7 +312,7 @@ export default function QueuePage() {
                 </select>
 
                 <button
-                  onClick={fetchOrders}
+                  onClick={() => fetchOrders(debouncedSearch, true)}
                   title="Refresh Board"
                   className="p-2.5 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 transition"
                 >
@@ -285,6 +354,13 @@ export default function QueuePage() {
             </div>
           </div>
 
+          {/* Background data sync pulse indicator */}
+          {loading && orders.length > 0 && (
+            <div className="w-full bg-blue-100/70 h-1 overflow-hidden rounded-full animate-in fade-in">
+              <div className="bg-blue-600 h-full w-2/5 rounded-full animate-pulse"></div>
+            </div>
+          )}
+
           {/* Kanban Multi-Column Board (Grid on Laptop/Desktop, Side-Scroll on Mobile & Tablet) */}
           <div className="kanban-board-container flex gap-4 items-start overflow-x-auto pb-4 pt-1 px-0.5 scrollbar-thin lg:grid lg:grid-cols-3 2xl:grid-cols-6 lg:overflow-x-visible lg:pb-0">
             {boardColumns
@@ -320,7 +396,21 @@ export default function QueuePage() {
 
                     {/* Order Cards */}
                     <div className="space-y-3 flex-1 overflow-y-auto">
-                      {colOrders.length === 0 ? (
+                      {loading && orders.length === 0 ? (
+                        <div className="space-y-2.5 py-1">
+                          {[1, 2].map((n) => (
+                            <div key={n} className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-xs animate-pulse space-y-2.5">
+                              <div className="flex justify-between items-center">
+                                <div className="h-3.5 bg-slate-200 rounded w-16"></div>
+                                <div className="h-4 bg-slate-200 rounded-md w-12"></div>
+                              </div>
+                              <div className="h-3.5 bg-slate-200 rounded w-28"></div>
+                              <div className="h-10 bg-slate-100 rounded-xl"></div>
+                              <div className="h-7 bg-slate-200 rounded-xl"></div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : colOrders.length === 0 ? (
                         <div className="py-12 text-center text-slate-400 text-xs">
                           No orders in this station
                         </div>
@@ -337,16 +427,20 @@ export default function QueuePage() {
                           const nextStageInfo = next ? ALL_STAGES[next] : null;
                           const displayItems = order.orderItems || order.items || [];
                           const isFullyPaid = order.balance === 0;
+                          const isUpdating = !!updatingOrderIds[order._id];
 
                           return (
                             <div
                               key={order._id}
-                              className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-xs hover:shadow-md transition space-y-2.5"
+                              className={`bg-white rounded-2xl p-3.5 border border-slate-200 shadow-xs hover:shadow-md transition space-y-2.5 ${
+                                isUpdating ? 'ring-2 ring-blue-500/50 opacity-90' : ''
+                              }`}
                             >
                               {/* Order # and Payment Status Badge */}
                               <div className="flex items-center justify-between gap-1">
-                                <span className="font-mono font-bold text-blue-600 text-xs">
-                                  #{order.orderNumber}
+                                <span className="font-mono font-bold text-blue-600 text-xs flex items-center space-x-1">
+                                  <span>#{order.orderNumber}</span>
+                                  {isUpdating && <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />}
                                 </span>
                                 <span
                                   className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${isFullyPaid
@@ -407,19 +501,32 @@ export default function QueuePage() {
                                 {next ? (
                                   <button
                                     onClick={() => handleAdvanceStage(order)}
-                                    className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center space-x-1 shadow-xs transition ${next === 'claimed'
-                                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                        : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                      }`}
+                                    disabled={isUpdating}
+                                    className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center space-x-1 shadow-xs transition active:scale-95 ${
+                                      isUpdating
+                                        ? 'bg-blue-400 text-white cursor-wait opacity-90'
+                                        : next === 'claimed'
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                    }`}
                                   >
-                                    <span>
-                                      {next === 'claimed'
-                                        ? order.balance > 0
-                                          ? 'Collect & Deliver'
-                                          : 'Handover'
-                                        : `Move to ${nextStageInfo?.label.split('/')[0].trim() || next}`}
-                                    </span>
-                                    <ChevronRight className="w-3.5 h-3.5" />
+                                    {isUpdating ? (
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        <span>Saving...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span>
+                                          {next === 'claimed'
+                                            ? order.balance > 0
+                                              ? 'Collect & Deliver'
+                                              : 'Handover'
+                                            : `Move to ${nextStageInfo?.label.split('/')[0].trim() || next}`}
+                                        </span>
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                      </>
+                                    )}
                                   </button>
                                 ) : (
                                   <div className="flex-1 py-1 text-center text-[10px] font-bold text-slate-400 uppercase">
@@ -561,13 +668,20 @@ export default function QueuePage() {
                 <button
                   type="submit"
                   disabled={handoverSubmitting}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition"
+                  className={`flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5 ${
+                    handoverSubmitting ? 'opacity-80 cursor-wait' : 'active:scale-95'
+                  }`}
                 >
-                  {handoverSubmitting
-                    ? 'Processing...'
-                    : adminOverride
-                      ? 'Confirm Handover'
-                      : `Collect ₹${collectAmount} & Deliver`}
+                  {handoverSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Processing Handover...</span>
+                    </>
+                  ) : adminOverride ? (
+                    'Confirm Handover'
+                  ) : (
+                    `Collect ₹${collectAmount} & Deliver`
+                  )}
                 </button>
               </div>
             </form>

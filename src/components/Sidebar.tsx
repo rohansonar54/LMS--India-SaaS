@@ -156,9 +156,11 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
         {/* Close Button on Any Device (Mobile, Tablet, Desktop) */}
         <button
+          type="button"
           onClick={handleClose}
           aria-label="Close Navigation Menu"
           title="Close Navigation Menu"
+          suppressHydrationWarning
           className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
         >
           <X className="w-5 h-5" />
@@ -256,8 +258,10 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       {/* Quick Demo Seeder & User Profile Footer */}
       <div className="p-3 border-t border-slate-800 space-y-2">
         <button
+          type="button"
           onClick={handleSeed}
           disabled={seeding}
+          suppressHydrationWarning
           className="w-full flex items-center justify-center space-x-2 py-1.5 px-3 text-xs font-semibold rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 transition-all cursor-pointer"
         >
           <Sparkles className="w-3.5 h-3.5" />
@@ -277,8 +281,10 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             </div>
           </div>
           <button
+            type="button"
             onClick={handleLogout}
             title="Log out"
+            suppressHydrationWarning
             className="p-1 rounded-md text-slate-400 hover:text-rose-400 hover:bg-slate-700 transition cursor-pointer"
           >
             <LogOut className="w-4 h-4" />

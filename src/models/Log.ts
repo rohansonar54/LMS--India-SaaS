@@ -9,9 +9,9 @@ export interface ILog extends Document {
   createdAt: Date;
 }
 
-// 20 days retention policy in seconds: 20 * 24 * 60 * 60 = 1,728,000 seconds
-export const LOG_RETENTION_DAYS = 20;
-export const LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 60 * 60; // 1,728,000s
+// 10 days retention policy in seconds: 10 * 24 * 60 * 60 = 864,000 seconds
+export const LOG_RETENTION_DAYS = 10;
+export const LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 60 * 60; // 864,000s
 
 const LogSchema = new Schema<ILog>({
   username: { type: String, required: true, default: 'System' },
@@ -22,14 +22,14 @@ const LogSchema = new Schema<ILog>({
   createdAt: {
     type: Date,
     default: Date.now,
-    expires: LOG_RETENTION_SECONDS, // Native MongoDB TTL index: automatically deletes documents older than 20 days
+    expires: LOG_RETENTION_SECONDS, // Native MongoDB TTL index: automatically deletes documents older than 10 days
   },
 });
 
 export const Log: Model<ILog> = mongoose.models.Log || mongoose.model<ILog>('Log', LogSchema);
 
 /**
- * Automatically purges any logs older than 20 days from the database.
+ * Automatically purges any logs older than 10 days from the database.
  * Returns the count of deleted old log records.
  */
 export async function purgeOldLogs(): Promise<number> {

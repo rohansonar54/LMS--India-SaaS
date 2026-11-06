@@ -29,6 +29,7 @@ const LOG_TYPES = [
 export default function LogsPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [logs, setLogs] = useState<LogItem[]>([]);
+  const [retentionDays, setRetentionDays] = useState(10);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState('all');
@@ -47,6 +48,9 @@ export default function LogsPage() {
       .then((data) => {
         if (data.success) {
           setLogs(data.logs || []);
+          if (data.retentionDays) {
+            setRetentionDays(data.retentionDays);
+          }
         } else {
           setLogs([]);
         }
@@ -101,17 +105,19 @@ export default function LogsPage() {
                 <span>System Audit Trail</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Activity logs tracking logins, POS orders, collections, and system updates • Auto-purged after 20 days
+                Activity logs tracking logins, POS orders, collections, and system updates • Auto-purged after {retentionDays} days
               </p>
             </div>
 
             <div className="flex items-center space-x-2">
               <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-semibold shrink-0">
                 <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                <span>20-Day Auto-Retention</span>
+                <span>{retentionDays}-Day Auto-Retention</span>
               </span>
               <button
+                type="button"
                 onClick={fetchLogs}
+                suppressHydrationWarning
                 className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs shrink-0"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />

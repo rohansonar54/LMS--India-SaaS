@@ -201,4 +201,8 @@ const OrderSchema = new Schema<IOrder>({
   updatedAt: { type: Date, default: Date.now },
 });
 
+OrderSchema.index({ locationId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ locationId: 1, paymentStatus: 1 });
+OrderSchema.index({ orderNumber: 1 });
+
 export const Order: Model<IOrder> = mongoose.models.Order || mongoose.model<IOrder>('Order', OrderSchema);

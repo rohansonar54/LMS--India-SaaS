@@ -20,6 +20,7 @@ import {
   Search,
   AlertCircle,
   X,
+  Loader2,
 } from 'lucide-react';
 
 interface CustomerOption {
@@ -109,6 +110,7 @@ export default function TransactionsPage() {
 
   // Quick Customer Creation Modal
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
   const [newCustName, setNewCustName] = useState('');
   const [newCustContact, setNewCustContact] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
@@ -335,11 +337,12 @@ export default function TransactionsPage() {
     setCustomItemPrice('50');
   };
 
-  // Add new customer modal
+  // Add new customer modal with loader
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustName || !newCustContact) return;
 
+    setIsCreatingCustomer(true);
     try {
       const res = await fetch('/api/customers', {
         method: 'POST',
@@ -364,6 +367,8 @@ export default function TransactionsPage() {
       }
     } catch {
       alert('Failed to connect to server');
+    } finally {
+      setIsCreatingCustomer(false);
     }
   };
 
@@ -380,7 +385,7 @@ export default function TransactionsPage() {
     setAmountPaid(Math.round(finalOrderAmount / 2).toString());
   };
 
-  // Submit Order
+  // Submit Order with Optimistic Updates & Instant Feedback
   const handleCreateOrder = async () => {
     if (!selectedCustomerId) {
       alert('Please select or add a customer first.');
@@ -420,10 +425,24 @@ export default function TransactionsPage() {
 
       const data = await res.json();
       if (data.success && data.order) {
+        // Pop open receipt modal immediately
         setCompletedOrder(data.order);
-        // Refresh past orders
-        fetchData();
-        // Reset rows to default
+
+        // Prepend directly to recent orders list (instant 0ms update, no 5-API reload)
+        setRecentOrders((prev) => [data.order, ...prev.slice(0, 9)]);
+
+        // Update selected customer's outstanding balance locally
+        if (outstandingBalance > 0) {
+          setCustomers((prev) =>
+            prev.map((c) =>
+              c._id === selectedCustomerId
+                ? { ...c, outstandingBalance: (c.outstandingBalance || 0) + outstandingBalance }
+                : c
+            )
+          );
+        }
+
+        // Reset rows to default single item
         setItemRows([
           {
             id: Date.now().toString(),
@@ -472,6 +491,13 @@ export default function TransactionsPage() {
               </p>
             </div>
           </div>
+
+          {/* Background data sync pulse indicator */}
+          {loading && (
+            <div className="w-full bg-blue-100/70 h-1 overflow-hidden rounded-full animate-in fade-in">
+              <div className="bg-blue-600 h-full w-2/5 rounded-full animate-pulse"></div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
             {/* Left 7 Columns: Customer Selection + Dynamic Item Entry */}
@@ -1010,10 +1036,21 @@ export default function TransactionsPage() {
                 <button
                   onClick={handleCreateOrder}
                   disabled={isSubmitting || !selectedCustomerId || itemRows.length === 0}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-sm shadow-lg shadow-blue-500/25 flex items-center justify-center space-x-2 transition disabled:opacity-50"
+                  className={`w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-sm shadow-lg shadow-blue-500/25 flex items-center justify-center space-x-2 transition ${
+                    isSubmitting ? 'opacity-85 cursor-wait' : 'active:scale-[0.98]'
+                  } disabled:opacity-50`}
                 >
-                  <Receipt className="w-5 h-5" />
-                  <span>{isSubmitting ? 'Creating Order...' : `Create Order (${formatINR(finalOrderAmount)})`}</span>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Creating Order & Invoice...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Receipt className="w-5 h-5" />
+                      <span>Create Order ({formatINR(finalOrderAmount)})</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -1117,7 +1154,10 @@ export default function TransactionsPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-sm"
+                  disabled={isCreatingCustomer}
+                  className={`px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-sm flex items-center space-x-1.5 transition ${
+                    isCreatingCustomer ? 'opacity-80 cursor-wait' : 'active:scale-95'
+                  }`}
                 >
                   Save & Select
                 </button>

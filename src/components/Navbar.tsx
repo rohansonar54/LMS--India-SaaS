@@ -32,9 +32,11 @@ export default function Navbar({
       <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
         {/* Universal Menu Toggle Button (Visible on ALL devices: Mobile, Tablet & Desktop/Web) */}
         <button
+          type="button"
           onClick={handleToggle}
           aria-label="Toggle Navigation Menu"
           title={desktopOpen ? "Collapse Navigation Menu" : "Open Navigation Menu"}
+          suppressHydrationWarning
           className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition border border-slate-200 shrink-0 flex items-center justify-center cursor-pointer shadow-2xs"
         >
           <Menu className="w-5 h-5" />
